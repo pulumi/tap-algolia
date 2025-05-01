@@ -1,0 +1,79 @@
+version: 1
+send_anonymous_usage_stats: true
+project_id: "tap-algolia"
+default_environment: test
+venv:
+  backend: uv
+environments:
+- name: test
+plugins:
+  extractors:
+  - name: "tap-algolia"
+    namespace: "tap_algolia"
+    pip_url: -e .
+    capabilities:
+    - state
+    - catalog
+    - discover
+    - about
+    - stream-maps
+
+    settings:
+    # Algolia Analytics API credentials
+    - name: application_id
+      label: Application ID
+      description: The Algolia Application ID (X-Algolia-Application-Id header)
+
+    - name: api_key
+      kind: password
+      label: API Key
+      description: The Algolia API Key with analytics permissions (X-Algolia-API-Key header)
+      sensitive: true
+
+    # Indices to sync
+    - name: indices
+      kind: array
+      label: Indices
+      description: Algolia indices to sync analytics data for
+
+    # Region and date range
+    - name: region
+      label: Region
+      description: Algolia region (us or eu)
+
+    - name: start_date
+      kind: date_iso8601
+      label: Start Date
+      description: The earliest record date to sync (defaults to 30 days ago)
+
+    - name: end_date
+      kind: date_iso8601
+      label: End Date
+      description: The latest record date to sync (defaults to today)
+
+    # Optional parameters
+    - name: include_click_analytics
+      kind: boolean
+      label: Include Click Analytics
+      description: Whether to include click analytics metrics (CTR, position)
+
+    - name: date_window_size
+      kind: integer
+      label: Date Window Size
+      description: Number of days to include in each API request (max 30)
+
+    # Required settings validation
+    settings_group_validation:
+    - [application_id, api_key, indices]
+
+    # Default configuration values
+    config:
+      region: 'us'
+      start_date: '2023-01-01T00:00:00Z'
+      include_click_analytics: true
+      date_window_size: 30
+
+  loaders:
+  - name: target-jsonl
+    variant: andyh1203
+    pip_url: target-jsonl
