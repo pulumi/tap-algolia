@@ -298,6 +298,9 @@ class AlgoliaAnalyticsStream(RESTStream):
         elif any(endpoint in path for endpoint in ["/2/searches/noResultRate", "/2/clicks/clickThroughRate", "/2/searches/noClickRate"]):
             # Rate metrics endpoints all have dates array
             records = data.get("dates", [])
+        elif any(endpoint in path for endpoint in ["/2/searches/noResults", "/2/searches/noClicks"]):
+            # Searches with no results/clicks endpoints
+            records = data.get("searches", [])
         elif "/2/searches" in path:
             # Top searches endpoint
             records = data.get("searches", [])
@@ -368,6 +371,15 @@ class AlgoliaAnalyticsStream(RESTStream):
             for day in data.get("dates", []):
                 if isinstance(day, dict):
                     record = dict(day)
+                    record["index_name"] = index_name
+                    record.update(context)
+                    yield record
+                    
+        elif any(endpoint in path for endpoint in ["/2/searches/noResults", "/2/searches/noClicks"]):
+            # Searches with no results/clicks endpoints
+            for search in data.get("searches", []):
+                if isinstance(search, dict):
+                    record = dict(search)
                     record["index_name"] = index_name
                     record.update(context)
                     yield record

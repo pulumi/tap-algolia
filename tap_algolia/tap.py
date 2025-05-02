@@ -113,6 +113,8 @@ class TapAlgolia(Tap):
             streams.NoResultsRateStream(self),
             streams.ClickThroughRateStream(self),
             streams.NoClickRateStream(self),
+            streams.NoResultsSearchesStream(self),
+            streams.NoClicksSearchesStream(self),
         ]
         
         return analytics_streams

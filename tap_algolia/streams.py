@@ -316,3 +316,123 @@ class NoClickRateStream(AlgoliaAnalyticsStream):
         self.logger.info(f"No-click rate request parameters: {params}")
             
         return params
+
+
+class NoResultsSearchesStream(AlgoliaAnalyticsStream):
+    """Stream for search queries that returned no results from Algolia Analytics API."""
+    
+    name = "no_results_searches"
+    path_template = "/2/searches/noResults"
+    primary_keys: ClassVar[List[str]] = ["index_name", "search"]
+    replication_key = None
+    records_jsonpath = "$.searches[*]"  # Path to the search records in response
+    
+    # Pagination parameters
+    limit = 1000
+    
+    schema = th.PropertiesList(
+        # Identifiers
+        th.Property("index_name", th.StringType, description="The Algolia index name"),
+        th.Property("search", th.StringType, description="Search query text"),
+        
+        # Metrics
+        th.Property("count", th.IntegerType, description="Number of times query was run with no results"),
+        th.Property("withFilterCount", th.IntegerType, description="Number of times query was run with filters"),
+        
+        # Date information (added by tap)
+        th.Property("start_date", th.DateType, description="Start date of the data window"),
+        th.Property("end_date", th.DateType, description="End date of the data window"),
+    ).to_dict()
+    
+    def get_url_params(
+        self,
+        context: dict | None,
+        next_page_token: t.Any | None,
+    ) -> dict[str, t.Any]:
+        """Return URL parameters for the Analytics API request.
+
+        Args:
+            context: The stream context.
+            next_page_token: Pagination token (offset for Analytics API).
+
+        Returns:
+            URL query parameters including date range and optional pagination.
+        """
+        params = super().get_url_params(context, next_page_token)
+        
+        # Add tags parameter if provided in the config
+        tags = self.config.get("tags")
+        if tags:
+            params["tags"] = tags
+        
+        # Add pagination parameters
+        params["limit"] = self.limit
+        if next_page_token:
+            params["offset"] = next_page_token
+        else:
+            params["offset"] = 0
+            
+        # Log the parameters for debugging
+        self.logger.info(f"No results searches request parameters: {params}")
+            
+        return params
+
+
+class NoClicksSearchesStream(AlgoliaAnalyticsStream):
+    """Stream for search queries that received no clicks from Algolia Analytics API."""
+    
+    name = "no_clicks_searches"
+    path_template = "/2/searches/noClicks"
+    primary_keys: ClassVar[List[str]] = ["index_name", "search"]
+    replication_key = None
+    records_jsonpath = "$.searches[*]"  # Path to the search records in response
+    
+    # Pagination parameters
+    limit = 1000
+    
+    schema = th.PropertiesList(
+        # Identifiers
+        th.Property("index_name", th.StringType, description="The Algolia index name"),
+        th.Property("search", th.StringType, description="Search query text"),
+        
+        # Metrics
+        th.Property("count", th.IntegerType, description="Number of times query was run without clicks"),
+        th.Property("nbHits", th.IntegerType, description="Number of hits returned for this search query"),
+        
+        # Date information (added by tap)
+        th.Property("start_date", th.DateType, description="Start date of the data window"),
+        th.Property("end_date", th.DateType, description="End date of the data window"),
+    ).to_dict()
+    
+    def get_url_params(
+        self,
+        context: dict | None,
+        next_page_token: t.Any | None,
+    ) -> dict[str, t.Any]:
+        """Return URL parameters for the Analytics API request.
+
+        Args:
+            context: The stream context.
+            next_page_token: Pagination token (offset for Analytics API).
+
+        Returns:
+            URL query parameters including date range and optional pagination.
+        """
+        params = super().get_url_params(context, next_page_token)
+        
+        # Add tags parameter if provided in the config
+        tags = self.config.get("tags")
+        if tags:
+            params["tags"] = tags
+        
+        # Add pagination parameters
+        params["limit"] = self.limit
+        if next_page_token:
+            params["offset"] = next_page_token
+        else:
+            params["offset"] = 0
+            
+        # Log the parameters for debugging
+        self.logger.info(f"No clicks searches request parameters: {params}")
+            
+        return params
