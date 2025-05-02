@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import decimal
 import typing as t
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from importlib import resources
 from typing import Any, ClassVar, Dict, Iterable, List, Optional
 
 from singer_sdk.authenticators import APIKeyAuthenticator
 from singer_sdk.helpers.jsonpath import extract_jsonpath
-from singer_sdk.pagination import BaseAPIPaginator  # noqa: TC002
+from singer_sdk.pagination import BaseOffsetPaginator
 from singer_sdk.streams import RESTStream
 
 if t.TYPE_CHECKING:
@@ -18,24 +18,24 @@ if t.TYPE_CHECKING:
     from singer_sdk.helpers.types import Context
 
 
-# TODO: Delete this is if not using json files for schema definition
+# Schema directory for JSON schema files
 SCHEMAS_DIR = resources.files(__package__) / "schemas"
 
 
 class AlgoliaStream(RESTStream):
-    """Algolia stream class."""
+    """Base Algolia stream class."""
 
-    # Update this value if necessary or override `parse_response`.
+    # Default records extraction jsonpath
     records_jsonpath = "$[*]"
 
-    # Update this value if necessary or override `get_new_paginator`.
-    next_page_token_jsonpath = "$.next_page"  # noqa: S105
+    # Default pagination token jsonpath
+    next_page_token_jsonpath = "$.next_page"
 
     @property
     def url_base(self) -> str:
         """Return the API URL root, configurable via tap settings."""
-        # TODO: hardcode a value here, or retrieve it from self.config
-        return "https://api.mysample.com"
+        # Default to US Algolia API
+        return "https://www.algolia.com/api"
 
     @property
     def authenticator(self) -> APIKeyAuthenticator:
@@ -46,8 +46,8 @@ class AlgoliaStream(RESTStream):
         """
         return APIKeyAuthenticator.create_for_stream(
             self,
-            key="x-api-key",
-            value=self.config.get("auth_token", ""),
+            key="X-Algolia-API-Key",
+            value=self.config.get("api_key", ""),
             location="header",
         )
 
@@ -58,29 +58,29 @@ class AlgoliaStream(RESTStream):
         Returns:
             A dictionary of HTTP headers.
         """
-        # If not using an authenticator, you may also provide inline auth headers:
-        # headers["Private-Token"] = self.config.get("auth_token")  # noqa: ERA001
-        return {}
+        return {
+            "X-Algolia-Application-Id": self.config.get("application_id", ""),
+            "Content-Type": "application/json",
+        }
 
-    def get_new_paginator(self) -> BaseAPIPaginator:
-        """Create a new pagination helper instance.
-
-        If the source API can make use of the `next_page_token_jsonpath`
-        attribute, or it contains a `X-Next-Page` header in the response
-        then you can remove this method.
-
-        If you need custom pagination that uses page numbers, "next" links, or
-        other approaches, please read the guide: https://sdk.meltano.com/en/v0.25.0/guides/pagination-classes.html.
-
+    def get_new_paginator(self) -> BaseOffsetPaginator:
+        """Create a new offset-based pagination helper instance.
+        
+        The Algolia Analytics API uses offset/limit pagination.
+        
         Returns:
-            A pagination helper instance.
+            A BaseOffsetPaginator configured for Algolia Analytics API.
         """
-        return super().get_new_paginator()
+        return BaseOffsetPaginator(
+            start_value=0,
+            page_size=getattr(self, "limit", 1000),  # Use the stream's limit attribute or default to 1000
+            increment=getattr(self, "limit", 1000),  # Page size determines increment
+        )
 
     def get_url_params(
         self,
-        context: Context | None,  # noqa: ARG002
-        next_page_token: t.Any | None,  # noqa: ANN401
+        context: Context | None,
+        next_page_token: t.Any | None,
     ) -> dict[str, t.Any]:
         """Return a dictionary of values to be used in URL parameterization.
 
@@ -99,25 +99,6 @@ class AlgoliaStream(RESTStream):
             params["order_by"] = self.replication_key
         return params
 
-    def prepare_request_payload(
-        self,
-        context: Context | None,  # noqa: ARG002
-        next_page_token: t.Any | None,  # noqa: ARG002, ANN401
-    ) -> dict | None:
-        """Prepare the data payload for the REST API request.
-
-        By default, no payload will be sent (return None).
-
-        Args:
-            context: The stream context.
-            next_page_token: The next page index or value.
-
-        Returns:
-            A dictionary with the JSON body for a POST requests.
-        """
-        # TODO: Delete this method if no payload is required. (Most REST APIs.)
-        return None
-
     def parse_response(self, response: requests.Response) -> t.Iterable[dict]:
         """Parse the response and return an iterator of result records.
 
@@ -127,28 +108,10 @@ class AlgoliaStream(RESTStream):
         Yields:
             Each record from the source.
         """
-        # TODO: Parse response body and return a set of records.
         yield from extract_jsonpath(
             self.records_jsonpath,
             input=response.json(parse_float=decimal.Decimal),
         )
-
-    def post_process(
-        self,
-        row: dict,
-        context: Context | None = None,  # noqa: ARG002
-    ) -> dict | None:
-        """As needed, append or transform raw data to match expected structure.
-
-        Args:
-            row: An individual record from the stream.
-            context: The stream context.
-
-        Returns:
-            The updated record dictionary, or ``None`` to skip the record.
-        """
-        # TODO: Delete this method if not needed.
-        return row
 
 
 class AlgoliaAnalyticsStream(RESTStream):
@@ -156,6 +119,9 @@ class AlgoliaAnalyticsStream(RESTStream):
 
     # Default date range for lookback if not in state
     default_date_window: ClassVar[int] = 30
+    
+    # No next_page_token_jsonpath by default; streams will set this if needed
+    next_page_token_jsonpath = None
     
     def get_replication_key_value(self, value):
         """
@@ -273,62 +239,30 @@ class AlgoliaAnalyticsStream(RESTStream):
         # Add clickAnalytics parameter for streams that support it
         if getattr(self, "include_click_analytics", False):
             params["clickAnalytics"] = "true"
+        
+        # Add tags parameter if provided in the config
+        tags = self.config.get("tags")
+        if tags:
+            params["tags"] = tags
             
-        # Add pagination parameters if provided
+        # Handle pagination
+        # Get pagination limit from stream or use default
+        limit = getattr(self, "limit", 1000)
+        params["limit"] = limit
+        
+        # Add offset for pagination
         if next_page_token:
             params["offset"] = next_page_token
+        else:
+            params["offset"] = 0
             
-        # Default limit if not specified
-        if "limit" not in params and hasattr(self, "limit"):
-            params["limit"] = getattr(self, "limit")
+        # Log the parameters for debugging
+        self.logger.info(f"{self.name} request parameters: {params}")
             
         return params
 
-    def get_next_page_token(
-        self, response: requests.Response, previous_token: Any | None
-    ) -> Any | None:
-        """Return token for pagination or None if pagination is finished.
-
-        Args:
-            response: API response object.
-            previous_token: Previous pagination token.
-
-        Returns:
-            The next pagination token (offset) or None if no more pages.
-        """
-        # This is a simple offset-based implementation for endpoints that support pagination
-        offset = 0 if previous_token is None else previous_token
-        data = response.json(parse_float=decimal.Decimal)
-        
-        # Get the endpoint path to determine the response structure
-        path = response.request.url.split('?')[0]
-        
-        # Extract records based on stream type, looking at the records_jsonpath
-        records = []
-        
-        if "/2/users/count" in path:
-            # Users count endpoint has dates array
-            records = data.get("dates", [])
-        elif "/2/searches/count" in path:
-            # Searches count endpoint has dates array
-            records = data.get("dates", [])
-        elif any(endpoint in path for endpoint in ["/2/searches/noResultRate", "/2/clicks/clickThroughRate", "/2/searches/noClickRate"]):
-            # Rate metrics endpoints all have dates array
-            records = data.get("dates", [])
-        elif any(endpoint in path for endpoint in ["/2/searches/noResults", "/2/searches/noClicks"]):
-            # Searches with no results/clicks endpoints
-            records = data.get("searches", [])
-        elif "/2/searches" in path:
-            # Top searches endpoint
-            records = data.get("searches", [])
-        
-        # If we got a full page of results, return next offset
-        limit = getattr(self, "limit", 1000)
-        if len(records) >= limit:
-            return offset + limit
-            
-        # Otherwise, no more pages
-        return None
+    # We don't need get_next_page_token anymore since we're using BaseOffsetPaginator
+    # The paginator will handle offset calculation based on the API response size
 
     def parse_response(self, response: requests.Response) -> Iterable[dict]:
         """Parse Analytics API response and add index name and date info.
@@ -361,51 +295,138 @@ class AlgoliaAnalyticsStream(RESTStream):
         if "endDate" in url_params:
             context["end_date"] = url_params["endDate"]
             
-        # Determine the endpoint from the path
-        path = url_parts[0]
+        # Use jsonpath to extract the records using the stream's defined records_jsonpath
+        for record in extract_jsonpath(self.records_jsonpath, data):
+            if isinstance(record, dict):
+                # Make a copy of the record to avoid modifying the original
+                enriched_record = dict(record)
+                
+                # Add index_name if not present
+                if "index_name" not in enriched_record:
+                    enriched_record["index_name"] = index_name
+                
+                # Add date range context
+                enriched_record.update(context)
+                
+                yield enriched_record
+                
+    def get_records(self, context: Dict | None = None) -> Iterable[Dict]:
+        """Get records using the Analytics API with date range support.
         
-        # Handle different response formats based on endpoint
-        if "/2/users/count" in path:
-            # Users count has a dates array
-            for date_record in data.get("dates", []):
-                if isinstance(date_record, dict):
-                    record = dict(date_record)
-                    record["index_name"] = index_name
-                    record.update(context)
-                    yield record
+        Instead of getting a large date range in one request, this method
+        makes daily requests for better control and error handling.
+        
+        Args:
+            context: Stream context object, can contain start_date and end_date.
+            
+        Yields:
+            Records for the stream.
+        """
+        # Get end date (default is today)
+        end_date = date.today()
+        
+        # Get start date (default is N days before end date)
+        start_date = end_date - timedelta(days=self.default_date_window)
+        
+        # Check if we have a previous bookmark in state
+        if self.replication_key:
+            # Get the last processed date from state
+            replication_value = self.get_starting_replication_key_value(context)
+            if replication_value:
+                try:
+                    # Parse the date from the replication value
+                    last_date = datetime.strptime(replication_value, "%Y-%m-%d").date()
+                    # Start from the day after the last processed date
+                    start_date = last_date + timedelta(days=1)
+                    self.logger.info(f"Resuming from {start_date.isoformat()} (last state: {last_date.isoformat()})")
+                except (ValueError, TypeError):
+                    self.logger.info(f"Could not parse replication value: {replication_value}, using default window")
                     
-        elif "/2/searches/count" in path:
-            # Searches count endpoint with dates array
-            for day in data.get("dates", []):
-                if isinstance(day, dict):
-                    record = dict(day)
-                    record["index_name"] = index_name
-                    record.update(context)
-                    yield record
+        # Override with context dates if provided
+        if context and "start_date" in context:
+            try:
+                start_date = datetime.strptime(context["start_date"], "%Y-%m-%d").date()
+            except ValueError:
+                self.logger.warning(f"Invalid start_date format in context: {context['start_date']}")
+        
+        if context and "end_date" in context:
+            try:
+                end_date = datetime.strptime(context["end_date"], "%Y-%m-%d").date()
+            except ValueError:
+                self.logger.warning(f"Invalid end_date format in context: {context['end_date']}")
+            
+        # Skip if start date is after end date
+        if start_date > end_date:
+            self.logger.info(f"Start date {start_date.isoformat()} is after end date {end_date.isoformat()}, skipping extraction")
+            return
+            
+        # Calculate date range
+        delta = end_date - start_date
+        self.logger.info(f"Date range for extraction: {start_date.isoformat()} to {end_date.isoformat()} ({delta.days + 1} days)")
+        
+        # Process each day in the range
+        for i in range(delta.days + 1):
+            current_date = start_date + timedelta(days=i)
+            
+            # Create a context for this specific day
+            day_context = {
+                "start_date": current_date.isoformat(),
+                "end_date": current_date.isoformat(),
+                "date": current_date.isoformat(),
+            }
+            
+            # Copy other values from the original context
+            if context:
+                for key, value in context.items():
+                    if key not in ["start_date", "end_date", "date", "state"]:
+                        day_context[key] = value
+            
+            # Log current day being processed
+            self.logger.info(f"Processing day: {current_date.isoformat()}")
+            
+            # Get records for this day using the REST stream logic with retry logic
+            max_retries = 5
+            retry_count = 0
+            retry_delay = 1  # seconds
+            
+            while retry_count < max_retries:
+                try:
+                    # Get records for this day using the REST stream logic
+                    record_count = 0
+                    for record in super().get_records(day_context):
+                        # Ensure date field is present and is a string
+                        if "date" not in record:
+                            record["date"] = current_date.isoformat()
+                        elif not isinstance(record["date"], str):
+                            record["date"] = record["date"].isoformat() if hasattr(record["date"], "isoformat") else str(record["date"])
+                        
+                        record_count += 1
+                        yield record
                     
-        elif any(endpoint in path for endpoint in ["/2/searches/noResultRate", "/2/clicks/clickThroughRate", "/2/searches/noClickRate"]):
-            # Rate metrics endpoints all use dates array
-            for day in data.get("dates", []):
-                if isinstance(day, dict):
-                    record = dict(day)
-                    record["index_name"] = index_name
-                    record.update(context)
-                    yield record
+                    # Log successful processing
+                    self.logger.info(f"Processed {record_count} records for {current_date.isoformat()}")
                     
-        elif any(endpoint in path for endpoint in ["/2/searches/noResults", "/2/searches/noClicks"]):
-            # Searches with no results/clicks endpoints
-            for search in data.get("searches", []):
-                if isinstance(search, dict):
-                    record = dict(search)
-                    record["index_name"] = index_name
-                    record.update(context)
-                    yield record
+                    # Break out of retry loop on success
+                    break
                     
-        elif "/2/searches" in path:
-            # Top searches endpoint returns searches array
-            for search in data.get("searches", []):
-                if isinstance(search, dict):
-                    record = dict(search)
-                    record["index_name"] = index_name
-                    record.update(context)
-                    yield record
+                except ConnectionResetError as e:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        # Exponential backoff
+                        sleep_time = retry_delay * (2 ** (retry_count - 1))
+                        self.logger.warning(
+                            f"Connection reset when processing {current_date.isoformat()}. "
+                            f"Retrying in {sleep_time} seconds... (Attempt {retry_count}/{max_retries})"
+                        )
+                        import time
+                        time.sleep(sleep_time)
+                    else:
+                        self.logger.error(
+                            f"Failed to process {current_date.isoformat()} after {max_retries} attempts. "
+                            f"Last error: {str(e)}"
+                        )
+                        # Re-raise the exception after max retries
+                        raise
+                except Exception as e:
+                    self.logger.error(f"Error processing {current_date.isoformat()}: {str(e)}")
+                    raise

@@ -4,6 +4,13 @@
 
 Built with the [Meltano Tap SDK](https://sdk.meltano.com) for Singer Taps.
 
+This tap:
+
+- Pulls data from the Algolia Analytics API
+- Extracts analytics metrics from your Algolia indices
+- Handles incremental replication based on date ranges
+- Outputs data according to the Singer spec
+
 ## Installation
 
 ```bash
@@ -38,6 +45,7 @@ tap-algolia --about
 | end_date              | today   | The latest date to extract data to (YYYY-MM-DD) |
 | include_click_analytics | True    | Whether to include click analytics metrics (CTR, position) |
 | date_window_size      | 30      | Number of days to include in each API request (max 30) |
+| tags                  | None    | Optional tag filters for metrics (e.g. 'device:mobile') |
 
 A sample configuration is included in [meltano.yml](./meltano.yml).
 
@@ -51,19 +59,22 @@ A sample configuration is included in [meltano.yml](./meltano.yml).
 
 ## Streams
 
-This tap extracts the following streams from the Algolia Analytics API:
+This tap extracts the following streams from the Algolia Analytics API v2:
 
-| Stream Name           | Endpoint                        | Description                                         |
-|-----------------------|---------------------------------|-----------------------------------------------------|
-| top_searches          | /searches/{index}/popular       | Top search queries with click analytics metrics     |
-| no_results_searches   | /searches/{index}/noresults     | Search queries that returned no results             |
-| search_count          | /searches/{index}/count         | Total search count with daily breakdown             |
-| no_results_rate       | /searches/{index}/noResultsRate | Percentage of searches returning no results         |
-| top_results           | /searches/{index}/topResults    | Most frequently shown records in search results     |
+| Stream Name           | Endpoint                  | Description                                         |
+|-----------------------|---------------------------|-----------------------------------------------------|
+| users_count           | /2/users/count           | User count metrics with daily breakdown             |
+| searches_count        | /2/searches/count        | Total search count with daily breakdown             |
+| top_searches          | /2/searches              | Top search queries with click analytics metrics     |
+| no_results_rate       | /2/searches/noResultRate | Percentage of searches returning no results         |
+| click_through_rate    | /2/clicks/clickThroughRate | Click-through rate metrics                        |
+| no_click_rate         | /2/searches/noClickRate  | No-click rate metrics                               |
+| no_results_searches   | /2/searches/noResults    | Search queries that returned no results             |
+| no_clicks_searches    | /2/searches/noClicks     | Search queries that received no clicks              |
 
 ### Data Schemas
 
-Schema definitions are available in the [streams.py](./tap_algolia/streams.py) file.
+Schema definitions are available in the JSON schema files in the [schemas directory](./tap_algolia/schemas/).
 
 ## Usage
 

@@ -1,0 +1,79 @@
+{
+  "type": "object",
+  "properties": {
+    "index_name": {
+      "type": "string",
+      "description": "The Algolia index name"
+    },
+    "search": {
+      "type": "string",
+      "description": "Search query text"
+    },
+    "count": {
+      "type": ["integer", "null"],
+      "description": "Number of times query was run"
+    },
+    "nbHits": {
+      "type": ["integer", "null"],
+      "description": "Number of hits for this search query"
+    },
+    "trackedSearchCount": {
+      "type": ["integer", "null"],
+      "description": "Number of tracked searches"
+    },
+    "clickCount": {
+      "type": ["integer", "null"],
+      "description": "Number of clicks"
+    },
+    "clickThroughRate": {
+      "type": ["number", "null"],
+      "description": "Click-through rate (0.0-1.0)"
+    },
+    "conversionCount": {
+      "type": ["integer", "null"],
+      "description": "Number of conversions"
+    },
+    "conversionRate": {
+      "type": ["number", "null"],
+      "description": "Conversion rate (0.0-1.0)"
+    },
+    "averageClickPosition": {
+      "type": ["number", "null"],
+      "description": "Average position clicked in result list"
+    },
+    "clickPositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "array",
+            "items": {"type": ["integer", "null"]},
+            "description": "Position range [start, end]"
+          },
+          "clickCount": {
+            "type": ["integer", "null"],
+            "description": "Clicks in this position range"
+          }
+        }
+      },
+      "description": "Detailed click positions"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of the metric (YYYY-MM-DD)"
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Start date of the data window (YYYY-MM-DD)"
+    },
+    "end_date": {
+      "type": "string",
+      "format": "date",
+      "description": "End date of the data window (YYYY-MM-DD)"
+    }
+  },
+  "required": ["index_name", "search", "date"]
+}
