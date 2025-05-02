@@ -157,6 +157,23 @@ class AlgoliaAnalyticsStream(RESTStream):
     # Default date range for lookback if not in state
     default_date_window: ClassVar[int] = 30
     
+    def get_replication_key_value(self, value):
+        """
+        Return the replication value as a string for consistent comparisons in state.
+        
+        Args:
+            value: The value from the record.
+            
+        Returns:
+            The standardized replication key value as a string.
+        """
+        if not value:
+            return None
+        # Convert dates to string format if they aren't already
+        if isinstance(value, (date, datetime)):
+            return value.isoformat().split('T')[0]  # Get just the YYYY-MM-DD part
+        return str(value)
+    
     @property
     def path(self) -> str:
         """Return the path template without any replacements.
