@@ -25,6 +25,9 @@ class UsersCountStream(AlgoliaAnalyticsStream):
     replication_key = "date"
     records_jsonpath = "$.dates[*]"  # Path to the daily breakdown data
     
+    # Default lookback window for replication (30 days)
+    default_date_window: ClassVar[int] = 30
+    
     schema = th.PropertiesList(
         # Identifiers
         th.Property("index_name", th.StringType, description="The Algolia index name"),
@@ -37,6 +40,123 @@ class UsersCountStream(AlgoliaAnalyticsStream):
         th.Property("start_date", th.StringType, description="Start date of the data window (YYYY-MM-DD)"),
         th.Property("end_date", th.StringType, description="End date of the data window (YYYY-MM-DD)"),
     ).to_dict()
+    
+    def get_records(self, context):
+        """Get a day-by-day extract of users count data.
+        
+        Instead of getting the default range of data (e.g., 30 days) in one request,
+        we'll make separate requests for each day to get daily data.
+        
+        Args:
+            context: The stream context.
+            
+        Yields:
+            Records with daily granularity.
+        """
+        # Get the date range from context or config
+        end_date = date.today()
+        start_date = end_date - timedelta(days=self.default_date_window)
+        
+        # Get state and check for bookmarks using the Singer SDK state mechanism
+        # Try different approaches to get the state, for robustness
+        try:
+            # More detailed logging of the state for debugging
+            bookmark_state = self.get_context_state(context)
+            if bookmark_state:
+                self.logger.info(f"Found bookmark state keys: {list(bookmark_state.keys()) if isinstance(bookmark_state, dict) else 'No keys available'}")
+            
+            # Try to get replication key value
+            replication_key_value = None
+            
+            # Method 1: Direct from start timestamp
+            if self.replication_key and context and context.get("start_timestamp"):
+                replication_key_value = context["start_timestamp"]
+                self.logger.info(f"Found replication key value from start_timestamp: {replication_key_value}")
+                
+            # Method 2: From Singer state mechanism
+            if not replication_key_value:
+                replication_key_value = self.get_starting_replication_key_value(context)
+                if replication_key_value:
+                    self.logger.info(f"Found replication key value from get_starting_replication_key_value: {replication_key_value}")
+            
+            # Method 3: From deeper bookmark structure
+            if not replication_key_value and bookmark_state and isinstance(bookmark_state, dict):
+                if "bookmarks" in bookmark_state and isinstance(bookmark_state["bookmarks"], dict):
+                    stream_bookmark = bookmark_state["bookmarks"].get(self.name, {})
+                    if isinstance(stream_bookmark, dict) and "replication_key_value" in stream_bookmark:
+                        replication_key_value = stream_bookmark["replication_key_value"]
+                        self.logger.info(f"Found replication key value from bookmark structure: {replication_key_value}")
+            
+            if replication_key_value:
+                try:
+                    last_date = datetime.strptime(replication_key_value, "%Y-%m-%d").date()
+                    # Start from the day after the last processed date
+                    start_date = last_date + timedelta(days=1)
+                    self.logger.info(f"Resuming extraction from {start_date.isoformat()} (last state: {last_date.isoformat()})")
+                except (ValueError, TypeError) as e:
+                    self.logger.warning(f"Invalid bookmark date format: {e}. Starting from default window.")
+                    
+        except Exception as e:
+            self.logger.warning(f"Error while retrieving state: {e}. Starting from default window.")
+        
+        # Override with context dates if provided
+        if context and "start_date" in context:
+            try:
+                start_date = datetime.strptime(context["start_date"], "%Y-%m-%d").date()
+            except ValueError:
+                self.logger.warning(f"Invalid start_date format in context: {context['start_date']}. Using {start_date}.")
+        
+        if context and "end_date" in context:
+            try:
+                end_date = datetime.strptime(context["end_date"], "%Y-%m-%d").date()
+            except ValueError:
+                self.logger.warning(f"Invalid end_date format in context: {context['end_date']}. Using {end_date}.")
+            
+        # Skip if start date is after end date
+        if start_date > end_date:
+            self.logger.info(f"Start date {start_date.isoformat()} is after end date {end_date.isoformat()}, skipping extraction")
+            return
+            
+        # Calculate date range
+        delta = end_date - start_date
+        self.logger.info(f"Date range for extraction: {start_date.isoformat()} to {end_date.isoformat()} ({delta.days + 1} days)")
+        
+        # Iterate through each day in the range
+        for i in range(delta.days + 1):
+            current_date = start_date + timedelta(days=i)
+            
+            # Create a new context with the specific day
+            day_context = {
+                "start_date": current_date.isoformat(),
+                "end_date": current_date.isoformat(),
+                "date": current_date.isoformat(),
+            }
+            
+            # If there was a context provided, copy any other values
+            if context:
+                for key, value in context.items():
+                    if key not in ["start_date", "end_date", "date", "state"]:
+                        day_context[key] = value
+            
+            # Get records for this specific day
+            self.logger.info(f"Getting users count for date: {current_date.isoformat()}")
+            
+            # Use the normal REST stream logic to get records
+            record_count = 0
+            for record in super().get_records(day_context):
+                # Add the date to the record - this field will be used by Singer for state tracking
+                # because it matches our replication_key
+                if "date" not in record:
+                    record["date"] = current_date.isoformat()
+                    
+                # Ensure date is in string format
+                if not isinstance(record["date"], str):
+                    record["date"] = record["date"].isoformat() if hasattr(record["date"], "isoformat") else str(record["date"])
+                    
+                record_count += 1
+                yield record
+                
+            self.logger.info(f"Processed {record_count} records for {current_date.isoformat()}")
 
 
 class SearchesCountStream(AlgoliaAnalyticsStream):
@@ -47,6 +167,9 @@ class SearchesCountStream(AlgoliaAnalyticsStream):
     primary_keys: ClassVar[List[str]] = ["index_name", "date"]
     replication_key = "date"
     records_jsonpath = "$.dates[*]"  # Path to the daily breakdown data
+    
+    # Default lookback window for replication (30 days)
+    default_date_window: ClassVar[int] = 30
     
     schema = th.PropertiesList(
         # Identifiers
@@ -60,6 +183,123 @@ class SearchesCountStream(AlgoliaAnalyticsStream):
         th.Property("start_date", th.StringType, description="Start date of the data window (YYYY-MM-DD)"),
         th.Property("end_date", th.StringType, description="End date of the data window (YYYY-MM-DD)"),
     ).to_dict()
+    
+    def get_records(self, context):
+        """Get a day-by-day extract of searches count data.
+        
+        Instead of getting the default range of data (e.g., 30 days) in one request,
+        we'll make separate requests for each day to get daily data.
+        
+        Args:
+            context: The stream context.
+            
+        Yields:
+            Records with daily granularity.
+        """
+        # Get the date range from context or config
+        end_date = date.today()
+        start_date = end_date - timedelta(days=self.default_date_window)
+        
+        # Get state and check for bookmarks using the Singer SDK state mechanism
+        # Try different approaches to get the state, for robustness
+        try:
+            # More detailed logging of the state for debugging
+            bookmark_state = self.get_context_state(context)
+            if bookmark_state:
+                self.logger.info(f"Found bookmark state keys: {list(bookmark_state.keys()) if isinstance(bookmark_state, dict) else 'No keys available'}")
+            
+            # Try to get replication key value
+            replication_key_value = None
+            
+            # Method 1: Direct from start timestamp
+            if self.replication_key and context and context.get("start_timestamp"):
+                replication_key_value = context["start_timestamp"]
+                self.logger.info(f"Found replication key value from start_timestamp: {replication_key_value}")
+                
+            # Method 2: From Singer state mechanism
+            if not replication_key_value:
+                replication_key_value = self.get_starting_replication_key_value(context)
+                if replication_key_value:
+                    self.logger.info(f"Found replication key value from get_starting_replication_key_value: {replication_key_value}")
+            
+            # Method 3: From deeper bookmark structure
+            if not replication_key_value and bookmark_state and isinstance(bookmark_state, dict):
+                if "bookmarks" in bookmark_state and isinstance(bookmark_state["bookmarks"], dict):
+                    stream_bookmark = bookmark_state["bookmarks"].get(self.name, {})
+                    if isinstance(stream_bookmark, dict) and "replication_key_value" in stream_bookmark:
+                        replication_key_value = stream_bookmark["replication_key_value"]
+                        self.logger.info(f"Found replication key value from bookmark structure: {replication_key_value}")
+            
+            if replication_key_value:
+                try:
+                    last_date = datetime.strptime(replication_key_value, "%Y-%m-%d").date()
+                    # Start from the day after the last processed date
+                    start_date = last_date + timedelta(days=1)
+                    self.logger.info(f"Resuming extraction from {start_date.isoformat()} (last state: {last_date.isoformat()})")
+                except (ValueError, TypeError) as e:
+                    self.logger.warning(f"Invalid bookmark date format: {e}. Starting from default window.")
+                    
+        except Exception as e:
+            self.logger.warning(f"Error while retrieving state: {e}. Starting from default window.")
+        
+        # Override with context dates if provided
+        if context and "start_date" in context:
+            try:
+                start_date = datetime.strptime(context["start_date"], "%Y-%m-%d").date()
+            except ValueError:
+                self.logger.warning(f"Invalid start_date format in context: {context['start_date']}. Using {start_date}.")
+        
+        if context and "end_date" in context:
+            try:
+                end_date = datetime.strptime(context["end_date"], "%Y-%m-%d").date()
+            except ValueError:
+                self.logger.warning(f"Invalid end_date format in context: {context['end_date']}. Using {end_date}.")
+            
+        # Skip if start date is after end date
+        if start_date > end_date:
+            self.logger.info(f"Start date {start_date.isoformat()} is after end date {end_date.isoformat()}, skipping extraction")
+            return
+            
+        # Calculate date range
+        delta = end_date - start_date
+        self.logger.info(f"Date range for extraction: {start_date.isoformat()} to {end_date.isoformat()} ({delta.days + 1} days)")
+        
+        # Iterate through each day in the range
+        for i in range(delta.days + 1):
+            current_date = start_date + timedelta(days=i)
+            
+            # Create a new context with the specific day
+            day_context = {
+                "start_date": current_date.isoformat(),
+                "end_date": current_date.isoformat(),
+                "date": current_date.isoformat(),
+            }
+            
+            # If there was a context provided, copy any other values
+            if context:
+                for key, value in context.items():
+                    if key not in ["start_date", "end_date", "date", "state"]:
+                        day_context[key] = value
+            
+            # Get records for this specific day
+            self.logger.info(f"Getting searches count for date: {current_date.isoformat()}")
+            
+            # Use the normal REST stream logic to get records
+            record_count = 0
+            for record in super().get_records(day_context):
+                # Add the date to the record - this field will be used by Singer for state tracking
+                # because it matches our replication_key
+                if "date" not in record:
+                    record["date"] = current_date.isoformat()
+                    
+                # Ensure date is in string format
+                if not isinstance(record["date"], str):
+                    record["date"] = record["date"].isoformat() if hasattr(record["date"], "isoformat") else str(record["date"])
+                    
+                record_count += 1
+                yield record
+                
+            self.logger.info(f"Processed {record_count} records for {current_date.isoformat()}")
 
 
 class TopSearchesStream(AlgoliaAnalyticsStream):
