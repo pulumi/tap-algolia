@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import typing as t
-from datetime import date, timedelta
-from importlib import resources
+from datetime import date, datetime, timedelta
 from typing import ClassVar, Dict, List, Optional
 
-from singer_sdk import typing as th  # JSON Schema typing helpers
-
 from tap_algolia.client import AlgoliaAnalyticsStream
-
-# TODO: Delete this is if not using json files for schema definition
-SCHEMAS_DIR = resources.files(__package__) / "schemas"
+from tap_algolia.schemas import load_schema
 
 # Algolia Analytics API Streams
 
@@ -24,19 +19,12 @@ class UsersCountStream(AlgoliaAnalyticsStream):
     primary_keys: ClassVar[List[str]] = ["index_name", "date"]
     replication_key = "date"
     records_jsonpath = "$.dates[*]"  # Path to the daily breakdown data
+    next_page_token_jsonpath = None  # No pagination token from response
     
-    schema = th.PropertiesList(
-        # Identifiers
-        th.Property("index_name", th.StringType, description="The Algolia index name"),
-        
-        # Metrics
-        th.Property("count", th.IntegerType, description="Number of users on this date"),
-        
-        # Date information
-        th.Property("date", th.DateType, description="Date of the metric"),
-        th.Property("start_date", th.DateType, description="Start date of the data window"),
-        th.Property("end_date", th.DateType, description="End date of the data window"),
-    ).to_dict()
+    # Default lookback window for replication (30 days)
+    default_date_window: ClassVar[int] = 30
+    
+    schema = load_schema("users_count")
 
 
 class SearchesCountStream(AlgoliaAnalyticsStream):
@@ -47,19 +35,12 @@ class SearchesCountStream(AlgoliaAnalyticsStream):
     primary_keys: ClassVar[List[str]] = ["index_name", "date"]
     replication_key = "date"
     records_jsonpath = "$.dates[*]"  # Path to the daily breakdown data
+    next_page_token_jsonpath = None  # No pagination token from response
     
-    schema = th.PropertiesList(
-        # Identifiers
-        th.Property("index_name", th.StringType, description="The Algolia index name"),
-        
-        # Metrics
-        th.Property("count", th.IntegerType, description="Number of searches on this date"),
-        
-        # Date information
-        th.Property("date", th.DateType, description="Date of the metric"),
-        th.Property("start_date", th.DateType, description="Start date of the data window"),
-        th.Property("end_date", th.DateType, description="End date of the data window"),
-    ).to_dict()
+    # Default lookback window for replication (30 days)
+    default_date_window: ClassVar[int] = 30
+    
+    schema = load_schema("searches_count")
 
 
 class TopSearchesStream(AlgoliaAnalyticsStream):
@@ -67,9 +48,10 @@ class TopSearchesStream(AlgoliaAnalyticsStream):
 
     name = "top_searches"
     path_template = "/2/searches"
-    primary_keys: ClassVar[List[str]] = ["index_name", "search"]
-    replication_key = None
+    primary_keys: ClassVar[List[str]] = ["index_name", "search", "date"]
+    replication_key = "date"  # Using date field for state management
     records_jsonpath = "$.searches[*]"  # Path to the search records in response
+    next_page_token_jsonpath = None  # No pagination token from response, we use offset
     
     # Include click analytics data
     include_click_analytics = True
@@ -77,33 +59,10 @@ class TopSearchesStream(AlgoliaAnalyticsStream):
     # Pagination parameters
     limit = 1000
     
-    schema = th.PropertiesList(
-        # Identifiers
-        th.Property("index_name", th.StringType, description="The Algolia index name"),
-        th.Property("search", th.StringType, description="Search query text"),
-        
-        # Basic metrics
-        th.Property("count", th.IntegerType, description="Number of times query was run"),
-        th.Property("nbHits", th.IntegerType, description="Number of hits for this search query"),
-        th.Property("trackedSearchCount", th.IntegerType, description="Number of tracked searches"),
-        
-        # Click analytics metrics
-        th.Property("clickCount", th.IntegerType, description="Number of clicks"),
-        th.Property("clickThroughRate", th.NumberType, description="Click-through rate (0.0-1.0)"),
-        th.Property("conversionCount", th.IntegerType, description="Number of conversions"),
-        th.Property("conversionRate", th.NumberType, description="Conversion rate (0.0-1.0)"),
-        th.Property("averageClickPosition", th.NumberType, description="Average position clicked in result list"),
-        
-        # Click positions detail
-        th.Property("clickPositions", th.ArrayType(th.ObjectType(
-            th.Property("position", th.ArrayType(th.IntegerType), description="Position range [start, end]"),
-            th.Property("clickCount", th.IntegerType, description="Clicks in this position range")
-        )), description="Detailed click positions"),
-        
-        # Date information (added by tap)
-        th.Property("start_date", th.DateType, description="Start date of the data window"),
-        th.Property("end_date", th.DateType, description="End date of the data window"),
-    ).to_dict()
+    # Default lookback window for replication (30 days)
+    default_date_window: ClassVar[int] = 30
+    
+    schema = load_schema("top_searches")
     
     def get_url_params(
         self,
@@ -121,9 +80,6 @@ class TopSearchesStream(AlgoliaAnalyticsStream):
         """
         params = super().get_url_params(context, next_page_token)
         
-        # Add click analytics parameter
-        params["clickAnalytics"] = "true"
-        
         # Add revenue analytics parameter
         params["revenueAnalytics"] = "false"
         
@@ -131,16 +87,6 @@ class TopSearchesStream(AlgoliaAnalyticsStream):
         params["orderBy"] = "searchCount"
         params["direction"] = "desc"
         
-        # Add pagination parameters
-        params["limit"] = self.limit
-        if next_page_token:
-            params["offset"] = next_page_token
-        else:
-            params["offset"] = 0
-            
-        # Log the parameters for debugging
-        self.logger.info(f"Top searches request parameters: {params}")
-            
         return params
         
     def validate_response(self, response: t.Any) -> None:
@@ -163,3 +109,77 @@ class TopSearchesStream(AlgoliaAnalyticsStream):
                 
         # Call parent validation
         super().validate_response(response)
+
+
+class NoResultsRateStream(AlgoliaAnalyticsStream):
+    """Stream for no results rate metrics from Algolia Analytics API."""
+    
+    name = "no_results_rate"
+    path_template = "/2/searches/noResultRate"
+    primary_keys: ClassVar[List[str]] = ["index_name", "date"]
+    replication_key = "date"
+    records_jsonpath = "$.dates[*]"  # Path to the daily breakdown data
+    
+    schema = load_schema("no_results_rate")
+        
+        
+class ClickThroughRateStream(AlgoliaAnalyticsStream):
+    """Stream for click-through rate metrics from Algolia Analytics API."""
+    
+    name = "click_through_rate"
+    path_template = "/2/clicks/clickThroughRate"
+    primary_keys: ClassVar[List[str]] = ["index_name", "date"]
+    replication_key = "date"
+    records_jsonpath = "$.dates[*]"  # Path to the daily breakdown data
+    
+    schema = load_schema("click_through_rate")
+
+
+class NoClickRateStream(AlgoliaAnalyticsStream):
+    """Stream for no-click rate metrics from Algolia Analytics API."""
+    
+    name = "no_click_rate"
+    path_template = "/2/searches/noClickRate"
+    primary_keys: ClassVar[List[str]] = ["index_name", "date"]
+    replication_key = "date"
+    records_jsonpath = "$.dates[*]"  # Path to the daily breakdown data
+    
+    schema = load_schema("no_click_rate")
+
+
+class NoResultsSearchesStream(AlgoliaAnalyticsStream):
+    """Stream for search queries that returned no results from Algolia Analytics API."""
+    
+    name = "no_results_searches"
+    path_template = "/2/searches/noResults"
+    primary_keys: ClassVar[List[str]] = ["index_name", "search", "date"]
+    replication_key = "date"  # Using date field for state management
+    records_jsonpath = "$.searches[*]"  # Path to the search records in response
+    next_page_token_jsonpath = None  # No pagination token from response, we use offset
+    
+    # Pagination parameters
+    limit = 1000
+    
+    # Default lookback window for replication (30 days)
+    default_date_window: ClassVar[int] = 30
+    
+    schema = load_schema("no_results_searches")
+
+
+class NoClicksSearchesStream(AlgoliaAnalyticsStream):
+    """Stream for search queries that received no clicks from Algolia Analytics API."""
+    
+    name = "no_clicks_searches"
+    path_template = "/2/searches/noClicks"
+    primary_keys: ClassVar[List[str]] = ["index_name", "search", "date"]
+    replication_key = "date"  # Using date field for state management
+    records_jsonpath = "$.searches[*]"  # Path to the search records in response
+    next_page_token_jsonpath = None  # No pagination token from response, we use offset
+    
+    # Pagination parameters
+    limit = 1000
+    
+    # Default lookback window for replication (30 days)
+    default_date_window: ClassVar[int] = 30
+    
+    schema = load_schema("no_clicks_searches")

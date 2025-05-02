@@ -72,6 +72,12 @@ class TapAlgolia(Tap):
             description="Whether to include click analytics metrics (CTR, position)",
         ),
         th.Property(
+            "tags",
+            th.StringType(nullable=True),
+            title="Tags Filter",
+            description="Optional tag filters for metrics (e.g. 'device:mobile')",
+        ),
+        th.Property(
             "date_window_size",
             th.IntegerType(nullable=True),
             default=30,
@@ -104,6 +110,11 @@ class TapAlgolia(Tap):
             streams.UsersCountStream(self),
             streams.TopSearchesStream(self),
             streams.SearchesCountStream(self),
+            streams.NoResultsRateStream(self),
+            streams.ClickThroughRateStream(self),
+            streams.NoClickRateStream(self),
+            streams.NoResultsSearchesStream(self),
+            streams.NoClicksSearchesStream(self),
         ]
         
         return analytics_streams

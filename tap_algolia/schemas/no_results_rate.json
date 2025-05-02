@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "properties": {
+    "index_name": {
+      "type": "string",
+      "description": "The Algolia index name"
+    },
+    "count": {
+      "type": ["integer", "null"],
+      "description": "Total number of searches on this date"
+    },
+    "noResultCount": {
+      "type": ["integer", "null"],
+      "description": "Number of searches with no results"
+    },
+    "rate": {
+      "type": ["number", "null"],
+      "description": "No results rate (0.0-1.0)"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of the metric"
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Start date of the data window"
+    },
+    "end_date": {
+      "type": "string",
+      "format": "date",
+      "description": "End date of the data window"
+    }
+  },
+  "required": ["index_name", "date"]
+}

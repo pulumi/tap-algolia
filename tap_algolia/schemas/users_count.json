@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "index_name": {
+      "type": "string",
+      "description": "The Algolia index name"
+    },
+    "count": {
+      "type": ["integer", "null"],
+      "description": "Number of users on this date"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of the metric (YYYY-MM-DD)"
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Start date of the data window (YYYY-MM-DD)"
+    },
+    "end_date": {
+      "type": "string",
+      "format": "date",
+      "description": "End date of the data window (YYYY-MM-DD)"
+    }
+  },
+  "required": ["index_name", "date"]
+}

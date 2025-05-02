@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "properties": {
+    "index_name": {
+      "type": "string",
+      "description": "The Algolia index name"
+    },
+    "search": {
+      "type": "string",
+      "description": "Search query text"
+    },
+    "count": {
+      "type": ["integer", "null"],
+      "description": "Number of times query was run without clicks"
+    },
+    "nbHits": {
+      "type": ["integer", "null"],
+      "description": "Number of hits returned for this search query"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of the metric (YYYY-MM-DD)"
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Start date of the data window (YYYY-MM-DD)"
+    },
+    "end_date": {
+      "type": "string",
+      "format": "date",
+      "description": "End date of the data window (YYYY-MM-DD)"
+    }
+  },
+  "required": ["index_name", "search", "date"]
+}
