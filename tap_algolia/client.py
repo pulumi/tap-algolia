@@ -123,6 +123,25 @@ class AlgoliaAnalyticsStream(RESTStream):
     # No next_page_token_jsonpath by default; streams will set this if needed
     next_page_token_jsonpath = None
     
+    def get_replication_key_signpost(
+        self,
+        context: Optional[Dict] = None,
+    ) -> str | Any | None:
+        """Get the replication signpost for date-based streams.
+        
+        Overrides the default behavior to use yesterday as the signpost,
+        ensuring we never process data from the current day.
+        
+        Args:
+            context: Stream partition or context dictionary.
+            
+        Returns:
+            Yesterday's date as string in ISO format (YYYY-MM-DD).
+        """
+        # Return yesterday as ISO format string for consistent comparison
+        yesterday = date.today() - timedelta(days=1)
+        return yesterday.isoformat()
+    
     def get_replication_key_value(self, value):
         """
         Return the replication value as a string for consistent comparisons in state.
@@ -228,13 +247,19 @@ class AlgoliaAnalyticsStream(RESTStream):
         # Add date range parameters
         if context and "start_date" in context:
             params["startDate"] = context["start_date"]
-            params["endDate"] = context["end_date"]
+            
+            if "end_date" in context:
+                params["endDate"] = context["end_date"]
+            else:
+                # No end_date in context, use yesterday
+                params["endDate"] = (date.today() - timedelta(days=1)).isoformat()
         else:
-            # Default to last 30 days if no specific dates provided
-            end_date = date.today()
+            # Default to last 30 days ending yesterday if no specific dates provided
+            end_date = date.today() - timedelta(days=1)  # Use yesterday
             start_date = end_date - timedelta(days=self.default_date_window)
             params["startDate"] = start_date.isoformat()
             params["endDate"] = end_date.isoformat()
+            self.logger.info(f"Using default date range: {start_date.isoformat()} to {end_date.isoformat()} (yesterday)")
             
         # Add clickAnalytics parameter for streams that support it
         if getattr(self, "include_click_analytics", False):
@@ -322,8 +347,9 @@ class AlgoliaAnalyticsStream(RESTStream):
         Yields:
             Records for the stream.
         """
-        # Get end date (default is today)
-        end_date = date.today()
+        # Get end date (default is yesterday, not today)
+        end_date = date.today() - timedelta(days=1)  # Process data up to yesterday
+        self.logger.info(f"Using end date: {end_date.isoformat()} (yesterday)")
         
         # Get start date (default is N days before end date)
         start_date = end_date - timedelta(days=self.default_date_window)
@@ -351,7 +377,15 @@ class AlgoliaAnalyticsStream(RESTStream):
         
         if context and "end_date" in context:
             try:
-                end_date = datetime.strptime(context["end_date"], "%Y-%m-%d").date()
+                # Even if a specific end_date is provided, ensure it's never later than yesterday
+                provided_end_date = datetime.strptime(context["end_date"], "%Y-%m-%d").date()
+                yesterday = date.today() - timedelta(days=1)
+                end_date = min(provided_end_date, yesterday)
+                if provided_end_date > yesterday:
+                    self.logger.info(f"Provided end_date {provided_end_date.isoformat()} is in the future, "
+                                    f"using yesterday ({yesterday.isoformat()}) instead")
+                else:
+                    self.logger.info(f"Using provided end_date: {end_date.isoformat()}")
             except ValueError:
                 self.logger.warning(f"Invalid end_date format in context: {context['end_date']}")
             
